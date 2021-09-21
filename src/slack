@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#set -x
 
 bindir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 etcdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +21,7 @@ cmd="${1}" ; shift
 case "${cmd}${1}" in
   chatdelete|chatsend|chatupdate|\
   filedelete|fileinfo|filelist|fileupload|\
-  presenceactive|presenceaway|\
+  presenceactive|presenceaway|away|active|\
   reminderadd|remindercomplete|reminderdelete|reminderinfo|reminderlist| \
   snoozeend|snoozeinfo|snoozestart|\
   statusclear|statusedit)
@@ -237,8 +238,9 @@ function attachify() {
   [ -n "${title}" ] && local _title=", \"title\": \"${title}\""
   [ -n "${titlelink}" ] && local _titlelink=", \"title_link\": \"${titlelink}\""
   local _json="${_author}${_authoricon}${_authorlink}${_color}${_footer}${_footericon}${_image}${_pretext}${_thumbnail}${__time}${_title}${_titlelink}${_fields}${_actions}"
-  [ -z "${_json}" ] && local _attachments="[{\"mrkdwn_in\": [\"pretext\"], \"fallback\": \"${text}\", \"pretext\": \"${text}\"}]"
-  [ -n "${_json}" ] && local _attachments="[{\"mrkdwn_in\": [\"fields\", \"pretext\", \"text\"], \"fallback\": \"${text}\", \"text\": \"${text}\"${_json}}]"
+  #[ -z "${_json}" ] && local _attachments="[{\"mrkdwn_in\": [\"pretext\"], \"fallback\": \"${text}\", \"pretext\": \"${text}\"}]"
+  [ -z "${_json}" ] && local _attachments="text=${text}"
+  [ -n "${_json}" ] && local _attachments="attachments=[{\"mrkdwn_in\": [\"fields\", \"pretext\", \"text\"], \"fallback\": \"${text}\", \"text\": \"${text}\"${_json}}]"
 
   echo "${_attachments}"
 }
@@ -255,12 +257,12 @@ function lchannel() {
     @*)
       local _user=$(\
         curl -s -X POST https://slack.com/api/users.list --data-urlencode "token=${token}" 2>&1 | \
-        jq -r ".members | map(select(.name == \"${channel/@/}\" or .profile.display_name == \"${channel/@/}\")) | .[0].id")
+        jq -r ".members | map(select(.deleted == false and (.name == \"${channel/@/}\" or .real_name == \"${channel/@/}\" or .profile.display_name == \"${channel/@/}\"))) | .[0].id")
       local _channel=$(\
-        curl -s -X POST https://slack.com/api/im.list --data-urlencode "token=${token}" 2>&1 | \
-        jq -r ".ims | map(select(.user == \"${_user}\")) | .[].id")
+        curl -s -X POST https://slack.com/api/conversations.list --data-urlencode "token=${token}" --data-urlencode "types=public_channel,private_channel,mpim,im" --data-urlencode "limit=999" 2>&1 | \
+        jq -r ".channels | map(select(.user == \"${_user}\")) | .[].id")
 
-      echo ${_channel}
+      [ -n "${_channel}" ] && echo ${_channel}
     ;;
     *) echo ${channel} ;;
   esac
@@ -297,8 +299,9 @@ function chatsend() {
   local msg=$(\
     curl -s -X POST https://slack.com/api/chat.postMessage \
       --data-urlencode "as_user=true" \
-      --data-urlencode "attachments=$(attachify)" \
+      --data-urlencode "$(attachify)" \
       --data-urlencode "channel=$(lchannel)" \
+      --data-urlencode "parse=full" \
       --data-urlencode "token=${token}")
 
   jqify "${msg}"
@@ -310,7 +313,8 @@ function chatupdate() {
   local msg=$(\
     curl -s -X POST https://slack.com/api/chat.update \
       --data-urlencode "as_user=true" \
-      --data-urlencode "attachments=$(attachify)" \
+      --data-urlencode "$(attachify)" \
+      --data-urlencode "parse=full" \
       --data-urlencode "channel=$(lchannel)" \
       --data-urlencode "ts=${timestamp}" \
       --data-urlencode "token=${token}")
@@ -543,6 +547,10 @@ function init() {
 }
 
 # Setting presence=auto + setActive works more consistently than just setActive.
+function active() {
+    presenceactive
+}
+
 function presenceactive() {
   local msg0=$(\
     curl -s -X POST https://slack.com/api/users.setPresence \
@@ -554,6 +562,10 @@ function presenceactive() {
       --data-urlencode "token=${token}")
 
   jqify "${msg0}" && jqify "${msg1}" >/dev/null 2>&1
+}
+
+function away() {
+    presenceaway
 }
 
 function presenceaway() {
@@ -666,7 +678,7 @@ case "${cmd}${sub}" in
   init) init ; exit $? ;;
   chatdelete|chatsend|chatupdate|\
   filedelete|fileinfo|filelist|fileupload|\
-  presenceactive|presenceaway|\
+  presenceactive|presenceaway|away|active|\
   reminderadd|remindercomplete|reminderdelete|reminderinfo|reminderlist|\
   snoozeend|snoozeinfo|snoozestart|\
   statusclear|statusedit)
